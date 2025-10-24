@@ -29,15 +29,15 @@ Then compile each variant:
 nvcc -O3 --use_fast_math softmax_base.cu -o softmax_base
 nvcc -O3 --use_fast_math softmax_optimized.cu -o softmax_opt
 nvcc -O3 --use_fast_math softmax_unified.cu -o softmax_unified
-
+```
 
 ## 📊 Performance Summary (RTX 3060 Example)
 
-| Variant | Total Runtime | Speedup | Highlights |
-|----------|----------------|----------|-------------|
-| `softmax_base` | **~317 ms** | 1× | Includes repeated memcpy and normalization |
-| `softmax_opt` | **~326 ms** | ≈1× | Fully GPU-resident, no host transfers |
-| `softmax_unified` | **~147 ms** | **2.1× faster** | Unified Memory + Prefetch hides page faults |
+| Variant           | Total Runtime | Speedup         | Highlights                                  |
+| ----------------- | ------------- | --------------- | ------------------------------------------- |
+| `softmax_base`    | **~317 ms**   | 1×              | Includes repeated memcpy and normalization  |
+| `softmax_opt`     | **~326 ms**   | ≈1×             | Fully GPU-resident, no host transfers       |
+| `softmax_unified` | **~147 ms**   | **2.1× faster** | Unified Memory + Prefetch hides page faults |
 
 ---
 
@@ -51,4 +51,7 @@ You can open or download the full benchmark results here:
 ### 🖼️ Shmoo Runtime Comparison
 
 ![Shmoo Runtime Graph](results/shmoo_runtime.png)
+
+```
+
 ```
