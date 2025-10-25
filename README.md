@@ -112,6 +112,34 @@ It includes:
 - Derived speedups (Unified vs. Base / Optimized)  
 - Aggregated averages and runtime trends used to generate the Shmoo plot
 
+## 🚀 Running the Benchmark
+
+Once compiled, you can run each binary with a command-line argument specifying the **input vector length (N)**.  
+Each benchmark sweeps sizes from 1 K up to `Nmax`, doubling per step.
+
+### 🔹 Example runs
+
+Run with **10 million elements**:
+
+```bash
+./softmax_base 10000000      > shmoo_base_10m.csv
+./softmax_opt   10000000     > shmoo_opt_10m.csv
+./softmax_unified 10000000   > shmoo_unified_10m.csv
+```
+Run with **100 million elements**:
+```bash
+./softmax_base 100000000     > shmoo_base_100m.csv
+./softmax_opt   100000000    > shmoo_opt_100m.csv
+./softmax_unified 100000000  > shmoo_unified_100m.csv
+```
+Run with **1 billion elements** (works with GPU memory >= 12GB):
+```bash
+./softmax_base 1000000000     > shmoo_base_100m.csv
+./softmax_opt   1000000000    > shmoo_opt_100m.csv
+./softmax_unified 1000000000  > shmoo_unified_100m.csv
+```
+---
+
 ```
 
 ```
