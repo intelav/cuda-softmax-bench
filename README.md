@@ -20,17 +20,6 @@ It demonstrates how **memory transfer strategies** and **kernel chaining** impac
 
 ---
 
-## ⚙️ Build Instructions
-
-Ensure CUDA Toolkit ≥ **12.0** and Nsight Systems are installed.  
-Then compile each variant:
-
-```bash
-nvcc -O3 --use_fast_math softmax_base.cu -o softmax_base
-nvcc -O3 --use_fast_math softmax_optimized.cu -o softmax_opt
-nvcc -O3 --use_fast_math softmax_unified.cu -o softmax_unified
-```
-
 ## 📊 Performance Summary (RTX 3060 Example)
 
 | Variant           | Total Runtime | Speedup         | Highlights                                  |
