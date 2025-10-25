@@ -8,7 +8,7 @@ This repository provides a **comprehensive CUDA Softmax microbenchmark** compari
 
 It demonstrates how **memory transfer strategies** and **kernel chaining** impact performance on modern GPUs.
 
-![SoftMax Function(results/softmax_func.png)
+![SoftMax Function](results/softmax_func.png)
 
 ---
 
@@ -87,6 +87,7 @@ Each curve corresponds to one of **six GPU kernel variants** tested within each 
 | 4          | **Warp + Double Precision Kernel** | Uses higher-precision accumulation for numerical stability      |
 | 5          | **Warp + Vectorized Kernel**       | Vectorized memory loads (`float4`) to improve coalescing        |
 
+![GPU Performance Summary](results/kernel_report.png)
 ---
 
 ### 📈 Detailed BenchMark Results (Excel)
