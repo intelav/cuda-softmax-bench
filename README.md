@@ -86,7 +86,7 @@ nvcc -O3 --use_fast_math softmax_unified.cu -o softmax_unified
 
 ![Shmoo Runtime Graph](results/shmoo_runtime.png)
 
-The figure above shows **per-variant softmax kernel performance** across input sizes (from 1 K → 16 M elements).  
+The figure above shows **per-variant softmax kernel performance** across input sizes (from 1 K → 1 billion elements).  
 Each curve corresponds to one of **six GPU kernel variants** tested within each implementation:
 
 | Variant ID | Kernel Name (Conceptual) | Description |
