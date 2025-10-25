@@ -68,9 +68,9 @@ Ensure CUDA Toolkit ≥ **12.0** and Nsight Systems are installed.
 Then compile each variant:
 
 ```bash
-nvcc -O3 --use_fast_math softmax_base.cu -o softmax_base
-nvcc -O3 --use_fast_math softmax_optimized.cu -o softmax_opt
-nvcc -O3 --use_fast_math softmax_unified.cu -o softmax_unified
+nvcc -O3 --use_fast_math softmax_base.cu -Icuda-samples/Common -o softmax_base
+nvcc -O3 --use_fast_math softmax_optimized.cu -Icuda-samples/Common -o softmax_opt
+nvcc -O3 --use_fast_math softmax_unified.cu -Icuda-samples/Common -o softmax_unified
 ```
 
 ## 📊 Performance Summary (RTX 3060 Example)
@@ -134,9 +134,9 @@ Run with **100 million elements**:
 ```
 Run with **1 billion elements** (works with GPU memory >= 12GB):
 ```bash
-./softmax_base 1000000000     > shmoo_base_100m.csv
-./softmax_opt   1000000000    > shmoo_opt_100m.csv
-./softmax_unified 1000000000  > shmoo_unified_100m.csv
+./softmax_base 1000000000     > shmoo_base_1b.csv
+./softmax_opt   1000000000    > shmoo_opt_1b.csv
+./softmax_unified 1000000000  > shmoo_unified_1b.csv
 ```
 ---
 
