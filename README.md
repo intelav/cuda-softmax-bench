@@ -129,7 +129,4 @@ Run with **1 billion elements** (works with GPU memory >= 12GB):
 ```
 ---
 
-```
-
-```
 
