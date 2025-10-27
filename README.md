@@ -87,7 +87,7 @@ Each curve corresponds to one of **six GPU kernel variants** tested within each 
 | 4          | **Warp + Double Precision Kernel** | Uses higher-precision accumulation for numerical stability      |
 | 5          | **Warp + Vectorized Kernel**       | Vectorized memory loads (`float4`) to improve coalescing        |
 
-![GPU Performance Summary](results/kernel_report.png)
+
 ---
 
 ### 📈 Detailed BenchMark Results (Excel)
@@ -132,5 +132,31 @@ Run with **1 billion elements** (works with GPU memory >= 12GB):
 ./softmax_opt   1000000000    > shmoo_opt_1b.csv
 ./softmax_unified 1000000000  > shmoo_unified_1b.csv
 ```
+## 🔍 Profiling Analysis (Nsight Compute)
 
+Based on the Nsight Compute profiling results, the Unified Memory implementation demonstrates faster initialization because both CPU and GPU share a common memory space.
+This allows all input data to be directly initialized on the GPU without explicit data transfers.
+
+In contrast, the Softmax Base implementation allocates separate memory regions for the CPU and GPU.
+As a result, the CPU must explicitly copy data to GPU memory before execution, introducing additional transfer overhead and increasing total runtime.
+
+![Nsight Compute Profiling](results/ncu_profiling.png)
+
+### Kernel Performance Summary
+![CUDA Kernel Performance Summary](results/kernel_report.png)
+
+🧠 Why softmax_warp_vectorized_kernel Achieves Better Occupancy
+
+The softmax_warp_vectorized_kernel achieves the highest SM occupancy (~70–72%) and lowest register pressure (~36 registers/thread) among all variants.
+This improvement comes from reduced live variable usage per thread — vectorized memory loads and fused arithmetic reduce the number of temporary variables that must stay resident in registers.
+
+With fewer live registers per thread:
+
+- More warps can be scheduled concurrently on each SM.
+
+- The GPU hides latency more effectively.
+
+- Shared memory pressure remains low since intermediate values are reused efficiently.
+
+As a result, this kernel attains the best balance between compute utilization and resource footprint, leading to the highest throughput and smooth scaling across input sizes.
 ---
