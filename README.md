@@ -173,3 +173,14 @@ With fewer live registers per thread:
 
 As a result, this kernel attains the best balance between compute utilization and resource footprint, leading to the highest throughput and smooth scaling across input sizes.
 ---
+### 🔹 Triton vs CUDA C++ — Execution Time & TFLOPS Summary (RTX 3060 — Full Benchmark Sweep)
+
+| Kernel ID | Implementation | Time (1 B Elements) (ms) | Total Run Time (ms) | TFLOPS (Per Kernel) | Comments |
+|:--:|:--|--:|--:|--:|--|
+| 0 | **CUDA C++ Unified** | **25.8** | ≈ 679 | 0.12 | `softmax_warp_vectorized_kernel` — Unified Memory + Prefetch hides page-migration costs; benchmark includes six CUDA kernels across 21 sizes. |
+| 1 | **Triton Warp-Reduce** | **25.7** | ≈ 1703 | 0.12 | `softmax_warp_reduce_kernel` — Fused GPU kernel implemented in Triton; same six variants × 21 sizes; Python launch overhead adds latency. |
+
+*(Both implementations executed the same six softmax kernel variants up to 1 billion elements.  
+Per-kernel timing represents 1 B-element throughput; total time reflects the full multi-variant benchmark sweep.)*
+
+*(Data from [unified_1b.csv](unified_1b.csv) and [softmax_triton_shmoo.csv](triton/softmax_triton_shmoo.csv); 1 billion float inputs on RTX 3060 12 GB.)*
