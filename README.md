@@ -87,7 +87,20 @@ Each curve corresponds to one of **six GPU kernel variants** tested within each 
 | 4          | **Warp + Double Precision Kernel** | Uses higher-precision accumulation for numerical stability      |
 | 5          | **Warp + Vectorized Kernel**       | Vectorized memory loads (`float4`) to improve coalescing        |
 
+## 🚀 1 Billion-Element Benchmark Results (RTX 3060 12 GB)
 
+The table below summarizes the **best kernel execution times** for processing **1 billion float elements** using the six CUDA softmax variants.
+
+| Kernel ID | Kernel Variant Name | Time (ms) | Relative Speedup vs Baseline |
+|------------|--------------------|-----------:|------------------------------:|
+| 0 | Naïve Global Memory | 32.62 | 1.00× |
+| 1 | Shared Memory Kernel | 32.61 | 1.00× |
+| 2 | Warp Reduction Kernel | 26.99 | 1.21× |
+| 3 | Warp + Shared Reduction | 27.24 | 1.20× |
+| 4 | Warp + Double Precision Accumulate | 26.73 | 1.22× |
+| 5 | **Warp + Vectorized Kernel (Best)** | **25.82** | **1.26× faster** |
+
+*(Data from `unified_1b.csv` on RTX 3060 12 GB — full 1B-element vector softmax computation.)*
 ---
 
 ### 📈 Detailed BenchMark Results (Excel)
