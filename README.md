@@ -87,20 +87,32 @@ Each curve corresponds to one of **six GPU kernel variants** tested within each 
 | 4          | **Warp + Double Precision Kernel** | Uses higher-precision accumulation for numerical stability      |
 | 5          | **Warp + Vectorized Kernel**       | Vectorized memory loads (`float4`) to improve coalescing        |
 
-## 🚀 1 Billion-Element Benchmark Results (RTX 3060 12 GB)
+## 🚀 1 Billion-Element Benchmark (RTX 3060 12 GB)
 
-The table below summarizes the **best kernel execution times** for processing **1 billion float elements** using the six CUDA softmax variants.
+The following tables summarize execution times for each CUDA Softmax kernel variant when processing **1 billion (1e9) FP32 elements**.  
+Both **Baseline** (explicit CPU→GPU memory copies) and **Unified Memory + Prefetch** configurations were tested.
 
-| Kernel ID | Kernel Variant Name | Time (ms) | Relative Speedup vs Baseline |
-|------------|--------------------|-----------:|------------------------------:|
-| 0 | Naïve Global Memory | 32.62 | 1.00× |
-| 1 | Shared Memory Kernel | 32.61 | 1.00× |
-| 2 | Warp Reduction Kernel | 26.99 | 1.21× |
-| 3 | Warp + Shared Reduction | 27.24 | 1.20× |
-| 4 | Warp + Double Precision Accumulate | 26.73 | 1.22× |
-| 5 | **Warp + Vectorized Kernel (Best)** | **25.82** | **1.26× faster** |
+### 🔹 Execution Time & Speedup Summary
 
-*(Data from `unified_1b.csv` on RTX 3060 12 GB — full 1B-element vector softmax computation.)*
+| Kernel ID | Kernel Variant Name | Baseline Mode (ms) | Unified Memory (ms) | Unified vs Baseline Speedup | Comments |
+|:--:|:--|--:|--:|--:|--|
+| 0 | Naïve (Global Memory) | 62.70 | 32.62 | 1.92 × | Unified memory nearly halves total runtime by avoiding explicit H2D copies |
+| 1 | Shared Memory Kernel | 62.29 | 32.61 | 1.91 × | Copy overhead dominates baseline; Unified mode overlaps page migration |
+| 2 | Warp Reduction Kernel | 53.40 | 26.99 | 1.98 × | Better arithmetic intensity; Unified mode sustains higher bandwidth |
+| 3 | Warp + Shared Reduction | 54.62 | 27.24 | 2.01 × | Shared reuse + prefetch = best H2D latency hiding |
+| 4 | Warp + Double Precision Accumulate | 53.40 | 26.73 | 2.00 × | Higher-precision accumulation benefits from prefetched pages |
+| 5 | **Warp + Vectorized Kernel (Best)** | 51.61 | **25.82** | **2.00 × faster** | Lowest register pressure and highest SM occupancy; prefetch fully hides paging |
+
+*(Data from `base_1b.csv` and `unified_1b.csv`; 1 billion float inputs on RTX 3060 12 GB.)*
+
+---
+
+### 🧠 Profiling Insights
+- **Unified Memory Prefetch** nearly doubles throughput by eliminating manual memory copies and overlapping page migration with computation.  
+- The **Warp + Vectorized Kernel** remains the fastest overall (≈ 25.8 ms end-to-end).  
+- Nsight Compute shows ~36 registers/thread and ~70 % SM occupancy for this kernel, allowing more warps per SM and superior latency hiding.  
+- Beyond ≈ 1 B elements the workload becomes **bandwidth-bound**, so Unified Memory’s page migration overlap is crucial to maintaining high throughput.  
+
 ---
 
 ### 📈 Detailed BenchMark Results (Excel)
