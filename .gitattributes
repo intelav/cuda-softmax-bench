@@ -1,1 +1,3 @@
 *.ipynb linguist-detectable=false
+*.cu linguist-language=Cuda
+*.py linguist-language=Triton
