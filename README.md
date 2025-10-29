@@ -22,14 +22,6 @@ It demonstrates how **memory transfer strategies** and **kernel chaining** impac
 
 ---
 
-## 📊 Performance Summary (RTX 3060 Example)
-
-| Variant           | Total Runtime | Speedup         | Highlights                                  |
-| ----------------- | ------------- | --------------- | ------------------------------------------- |
-| `softmax_base`    | **~317 ms**   | 1×              | Includes repeated memcpy and normalization  |
-| `softmax_opt`     | **~326 ms**   | ≈1×             | Fully GPU-resident, no host transfers       |
-| `softmax_unified` | **~147 ms**   | **2.1× faster** | Unified Memory + Prefetch hides page faults |
-
 # 🚀 CUDA Softmax Benchmark Suite
 
 This repository provides a **comprehensive CUDA Softmax microbenchmark** comparing three variants of GPU implementations:
@@ -63,13 +55,20 @@ nvcc -O3 --use_fast_math softmax_optimized.cu -Icuda-samples/Common -o softmax_o
 nvcc -O3 --use_fast_math softmax_unified.cu -Icuda-samples/Common -o softmax_unified
 ```
 
-## 📊 Performance Summary (RTX 3060 Example)
+## 📊 Performance Summary (RTX 3060, 1 B Elements — End-to-End Runtime)
 
-| Variant           | Total Runtime | Speedup         | Highlights                                  |
-| ----------------- | ------------- | --------------- | ------------------------------------------- |
-| `softmax_base`    | **~317 ms**   | 1×              | Includes repeated memcpy and normalization  |
-| `softmax_opt`     | **~326 ms**   | ≈1×             | Fully GPU-resident, no host transfers       |
-| `softmax_unified` | **~147 ms**   | **2.1× faster** | Unified Memory + Prefetch hides page faults |
+| Variant | Total Runtime (ms) | Speedup vs Baseline | Key Highlights |
+|----------|-------------------:|--------------------:|----------------|
+| `softmax_base` | **12011 ms** | 1.00× | Includes explicit CPU→GPU memcpy, normalization, and full reduction passes |
+| `softmax_opt` | **15000 ms** | 0.80× | GPU-resident compute, but limited by separate allocations and no page overlap |
+| `softmax_unified` | **679 ms** | **≈ 17.7× faster** | Unified Memory + Prefetch eliminates memcpy overhead and overlaps page migration with compute |
+
+*(Data from [base_1b.csv](base_1b.csv) ,[opt_1b.csv](opt_1b.csv) and  [unified_1b.csv](unified_1b.csv); 1 billion float inputs on RTX 3060 12 GB.)*
+
+**Observation:**  
+Even though `softmax_opt` avoids host transfers, its separate GPU allocation still causes synchronization stalls and slower initialization.  
+`softmax_unified` dramatically reduces runtime by prefetching pages into GPU memory, enabling near-full bandwidth utilization during compute.
+
 
 ### 🖼️ Shmoo Runtime Comparison
 
@@ -103,7 +102,7 @@ Both **Baseline** (explicit CPU→GPU memory copies) and **Unified Memory + Pref
 | 4 | Warp + Double Precision Accumulate | 53.40 | 26.73 | 2.00 × | Higher-precision accumulation benefits from prefetched pages |
 | 5 | **Warp + Vectorized Kernel (Best)** | 51.61 | **25.82** | **2.00 × faster** | Lowest register pressure and highest SM occupancy; prefetch fully hides paging |
 
-*(Data from `base_1b.csv` and `unified_1b.csv`; 1 billion float inputs on RTX 3060 12 GB.)*
+*(Data from [base_1b.csv](base_1b.csv) and [unified_1b.csv](unified_1b.csv); 1 billion float inputs on RTX 3060 12 GB.)*
 
 ---
 
@@ -115,17 +114,6 @@ Both **Baseline** (explicit CPU→GPU memory copies) and **Unified Memory + Pref
 
 ---
 
-### 📈 Detailed BenchMark Results (Excel)
-
-For complete per-kernel, per-size timing data, open the benchmark spreadsheet:
-
-👉 [**softmax_cuda_analysis.xlsx**](softmax_cuda_analysis.xlsx)
-
-It includes:
-
-- Execution times for all six kernel variants under each memory strategy
-- Derived speedups (Unified vs. Base / Optimized)
-- Aggregated averages and runtime trends used to generate the Shmoo plot
 
 ## 🚀 Running the Benchmark
 
