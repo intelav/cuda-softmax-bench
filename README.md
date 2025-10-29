@@ -1,4 +1,5 @@
 # 🚀 CUDA Softmax Benchmark Suite
+[![Language](https://img.shields.io/badge/Triton-Cuda%20GPU-blue.svg)]()
 
 This repository provides a **comprehensive CUDA Softmax microbenchmark** comparing three variants of GPU implementations:
 
