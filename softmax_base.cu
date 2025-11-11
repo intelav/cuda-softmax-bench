@@ -14,7 +14,10 @@
 #include <float.h>
 #include <chrono>
 
-#define DEBUG_MODE  0  // <-- change to 1 to re-enable debug prints
+#define DEBUG_MODE  1  // <-- change to 1 to re-enable debug prints
+#define SINGLE_TEST_MODE  1
+#define SINGLE_KERNEL_ID_DEFAULT  3   // which kernel variant to test
+#define SINGLE_INPUT_SIZE_DEFAULT (1 << 24)  // 16M elements
 
 #if DEBUG_MODE
     #define DBG_PRINT(...)   printf(__VA_ARGS__)
@@ -23,7 +26,7 @@
 #endif
 
 
-#define MAX_BLOCK_DIM_SIZE 65535
+#define MAX_BLOCK 64
 #ifndef MIN
 #define MIN(x,y) ((x)<(y)?(x):(y))
 #endif
@@ -51,24 +54,36 @@ __inline__ __device__ float warpReduceMax(float val) {
 // Variant 0 — Naive softmax (global memory only)
 // Each thread computes exp(x[i]) and accumulates partial sums
 // ================================================================
+/*!SECTION
+two-pass softmax implementation without numerical stabilization (no max(x) subtraction).
+Memory-access pattern
+Within a warp, thread addresses are now 16 384 floats apart (≈ 64 kB stride).
+This destroys coalescing: each warp access causes 32 separate 4-byte transactions instead of one combined 128-byte transaction.
+Hardware still caches, but L2/L1 caching gives limited help because each line is used once before skipping far ahead.
+Compute overhead
+Each thread executes 1024 iterations (N/stride) for 16M, with branch/loop control and dependency on the same registers (local_sum).
+Increased instruction count per byte moved → lower effective throughput.
+*/
 __global__ void softmax_naive_kernel(const float* x, float* y,
                                      int N, float* partialSum) {
     int tid = threadIdx.x;
+    //global index
     int idx = blockIdx.x * blockDim.x + tid;
-    float local_sum = 0.f;
-
+    double local_sum = 0.f;
+    
+    //Each thread handles multiple elements, spaced out by the full grid size (via grid-stride loop).
     for (int i = idx; i < N; i += gridDim.x * blockDim.x) {
-        float val = expf(x[i]);  // No numerical stabilization
+        float val = expf(x[i]); 
         y[i] = val;
         local_sum += val;
     }
 
-    // Store partial sum into shared memory
-    __shared__ float sdata[256];
+    // Store partial sum into dynamic  shared memory
+    extern __shared__ float sdata[];
     sdata[tid] = local_sum;
     __syncthreads();
 
-    // Reduce within block
+    // Reduce within block, stride based reduction or simple tree-reduction loop
     for (int s = blockDim.x / 2; s > 0; s >>= 1)
         if (tid < s) sdata[tid] += sdata[tid + s];
     __syncthreads();
@@ -86,11 +101,15 @@ __global__ void softmax_shared_kernel(const float* x, float* y,
     int tid = threadIdx.x;
     int i = blockIdx.x * blockDim.x + tid;
 
-    float val = (i < N) ? expf(x[i]) : 0.f;
+    double val = (i < N) ? expf(x[i]) : 0.f;
+    //Each thread handles one element only.
     y[i] = val;
     sdata[tid] = val;
     __syncthreads();
-
+     /*!SECTION
+     Memory access pattern: contiguous, perfectly coalesced 32-thread warps.
+     Each warp issues full-width 128-byte memory transactions → the hardware bus is kept busy.
+    */                                   
     // Block reduction
     for (int s = blockDim.x / 2; s > 0; s >>= 1)
         if (tid < s) sdata[tid] += sdata[tid + s];
@@ -107,7 +126,8 @@ __global__ void softmax_warp_kernel(const float* x, float* y,
                                     int N, float* partialSum) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     float local_sum = 0.f;
-
+     
+    //Each thread handles multiple elements, spaced out by the full grid size (via grid-stride loop).
     for (int i = idx; i < N; i += gridDim.x * blockDim.x) {
         float val = expf(x[i]);
         y[i] = val;
@@ -116,9 +136,17 @@ __global__ void softmax_warp_kernel(const float* x, float* y,
 
     float sum = warpReduceSum(local_sum);
     __shared__ float warpSum[32];
+    //Fast bitwise way to compute threadIdx.x % 32 (warp lane ID)
+    //threadIdx.x / 32 is the warp ID within the block
     if ((threadIdx.x & 31) == 0) warpSum[threadIdx.x / 32] = sum;
     __syncthreads();
 
+    
+    /*!SECTION
+    At most 32 warps per block (because 32×32=1024 threads, the max block size on CUDA).
+    combines all the warp-level partial sums into one final block sum.
+    blockDim.x / 32 = number of warps in this block.
+    */
     float block_sum = 0.f;
     if (threadIdx.x < 32)
         block_sum = warpReduceSum((threadIdx.x < blockDim.x/32) ? warpSum[threadIdx.x] : 0.f);
@@ -126,6 +154,10 @@ __global__ void softmax_warp_kernel(const float* x, float* y,
     if (threadIdx.x == 0)
         partialSum[blockIdx.x] = block_sum;
 }
+/*if blocks launched are less than N/threads, each thread processes multiple elements in a grid-stride loop.  prvoided grid
+stride is implemented . but in this kenrel each thread processes only one element. 
+so this kernel is not fully utilizing the grid-stride loop concept.Hence its important to launch enough blocks to cover all elements.
+*/
 
 __global__ void softmax_warp_shared_kernel(const float* __restrict__ x,
                                          float* __restrict__ y,
@@ -164,7 +196,7 @@ __global__ void softmax_warp_shared_kernel(const float* __restrict__ x,
     if (tid == 0)
         partialSum[blockIdx.x] = block_sum;
 }
-
+//worst numerical stability among all variants due to rounding off error 
 __global__ void softmax_warp_shared_double_kernel(const float* x, float* y, int N, float* partialSum) {
     extern __shared__ float sdata[];
     int tid = threadIdx.x;
@@ -193,6 +225,7 @@ __global__ void softmax_warp_shared_double_kernel(const float* x, float* y, int 
     }
 }
 
+//best kernel for numerical stability as wel as speed
 __global__ void softmax_warp_vectorized_kernel(const float *__restrict__ x,
                                                      float *__restrict__ y,
                                                      int N,
@@ -229,7 +262,11 @@ __global__ void softmax_warp_vectorized_kernel(const float *__restrict__ x,
     exp4.w = expf(val4.w);
     local_sum = exp4.x + exp4.y + exp4.z + exp4.w;
 
-    // store exp(x) directly
+    // store exp(x) directly, tail elements (partial vector near the end), load scalars safely
+    //cudamalloc overprovisioned so that out-of-bounds vectorized accesses within a few bytes past the 
+    //logical end** (say, 4–16 bytes) don’t fault, hence if N is 10 , baseIdx is 0,4,8 , 
+    //all 3 vectors are written even though last one writes 2 extra floats beyond N.
+
     if (baseIdx < N)
         reinterpret_cast<float4 *>(y)[vecIndex] = exp4;
 
@@ -251,6 +288,86 @@ __global__ void softmax_warp_vectorized_kernel(const float *__restrict__ x,
         partialSum[blockIdx.x] = block_sum;
 }
 
+#include <cooperative_groups.h>
+namespace cg = cooperative_groups;
+
+template <typename T, unsigned int BLOCK_SIZE>
+__global__ void softmax_coopgrid_kernel(const T * __restrict__ d_input,
+                                        T * __restrict__ d_output,
+                                        T * __restrict__ g_max,
+                                        T * __restrict__ g_sum,
+                                        int N)
+{
+    // cooperative grid handle
+    cg::grid_group grid = cg::this_grid();
+
+    unsigned int tid = threadIdx.x;
+    unsigned int idx = blockIdx.x * BLOCK_SIZE + tid;
+
+    extern __shared__ T sdata[];
+    T *sdata_max = sdata;
+    T *sdata_sum = sdata + BLOCK_SIZE;
+
+    // ------------------------------------------------------------------
+    // 1. Local max
+    // ------------------------------------------------------------------
+    T x = (idx < N) ? d_input[idx] : -INFINITY;
+    sdata_max[tid] = x;
+    __syncthreads();
+
+    // Block reduction (max)
+    #pragma unroll
+    for (int offset = BLOCK_SIZE / 2; offset > 0; offset >>= 1)
+        if (tid < offset)
+            sdata_max[tid] = max(sdata_max[tid], sdata_max[tid + offset]);
+
+    
+    //broadcast block max to all threads in the block
+    T block_max = sdata_max[0];
+
+    // ------------------------------------------------------------------
+    // 2. Global max (atomic reduction)
+    // ------------------------------------------------------------------
+    if (tid == 0)
+        atomicMax((int*)g_max, __float_as_int(block_max));  // assuming float
+    grid.sync();
+
+    T global_max = *g_max; // broadcast to all threads
+    __syncthreads();
+
+    // ------------------------------------------------------------------
+    // 3. Compute exp(x - global_max)
+    // ------------------------------------------------------------------
+    T exp_val = (idx < N) ? exp(x - global_max) : T(0);
+    sdata_sum[tid] = exp_val;
+    __syncthreads();
+
+
+    // Block reduction (sum)
+    #pragma unroll
+    for (int offset = BLOCK_SIZE / 2; offset > 0; offset >>= 1)
+        if (tid < offset)
+            sdata_sum[tid] += sdata_sum[tid + offset];
+
+    T block_sum = sdata_sum[0];
+
+
+    // ------------------------------------------------------------------
+    // 4. Global sum (atomic add)
+    // ------------------------------------------------------------------
+    if (tid == 0)
+        atomicAdd(g_sum, block_sum);
+    grid.sync();
+
+    T global_sum = *g_sum;
+    __syncthreads();
+
+    // ------------------------------------------------------------------
+    // 5. Normalize and write
+    // ------------------------------------------------------------------
+    if (idx < N)
+        d_output[idx] = exp_val / global_sum;
+}
 
 // ================================================================
 // Normalization kernel (same for all variants)
@@ -267,39 +384,137 @@ __global__ void normalize_kernel(float* y, float *totalSum, int N) {
 template <class T>
 void softmax_launch(int N, int threads, int blocks,
                     int whichKernel, T *d_input, T *d_output,
-                    T *d_partial) {
-    switch (whichKernel) {
-        default:
-        case 0:
+                    T *d_partial)
+{
+    switch (whichKernel)
+    {
+        // ----------------------------------------------------------
+        case 0: {
+            DBG_PRINT("  >> Using softmax_naive_kernel\n");
             softmax_naive_kernel<<<blocks, threads, threads * sizeof(T)>>>(
                 d_input, d_output, N, d_partial);
+            checkCudaErrors(cudaDeviceSynchronize());
             break;
-        case 1:
+        }
+
+        // ----------------------------------------------------------
+        case 1: {
+            DBG_PRINT("  >> Using softmax_shared_kernel\n");
             softmax_shared_kernel<<<blocks, threads, threads * sizeof(T)>>>(
                 d_input, d_output, N, d_partial);
+            checkCudaErrors(cudaDeviceSynchronize());
             break;
-        case 2:
+        }
+
+        // ----------------------------------------------------------
+        case 2: {
+            DBG_PRINT("  >> Using softmax_reduce_kernel\n");
             softmax_warp_kernel<<<blocks, threads, 0>>>(
                 d_input, d_output, N, d_partial);
+            checkCudaErrors(cudaDeviceSynchronize());
             break;
-        case 3: 
+        }
+
+        // ----------------------------------------------------------
+        case 3: {
+            DBG_PRINT("  >> Using softmax_warp_shared_kernel\n");
             softmax_warp_shared_kernel<<<blocks, threads, threads * sizeof(T)>>>(
-                d_input, d_output, N, d_partial);    
-            break;  
-        case 4: 
+                d_input, d_output, N, d_partial);
+            checkCudaErrors(cudaDeviceSynchronize());
+            break;
+        }
+
+        // ----------------------------------------------------------
+        case 4: {
+            DBG_PRINT("  >> Using softmax_warp_shared_double_kernel\n");
             softmax_warp_shared_double_kernel<<<blocks, threads, threads * sizeof(T)>>>(
-                d_input, d_output, N, d_partial);    
-            break;  
-        case 5: 
-            int vecN = (N + 3) / 4;  // number of float4s
+                d_input, d_output, N, d_partial);
+            checkCudaErrors(cudaDeviceSynchronize());
+            break;
+        }
+
+        // ----------------------------------------------------------
+        case 5: {
+            DBG_PRINT("  >> Using softmax_warp_vectorized_kernel\n");
+            int vecN = (N + 3) / 4;              // number of float4s
             int threads_vec = threads;
             int blocks_vec  = (vecN + threads_vec - 1) / threads_vec;
-            softmax_warp_vectorized_kernel<<<blocks_vec, threads_vec, threads_vec * sizeof(T)>>>(
-                d_input, d_output, N, d_partial);   
 
-            break;    
-    }
+            softmax_warp_vectorized_kernel<<<blocks_vec, threads_vec,
+                                             threads_vec * sizeof(T)>>>(
+                d_input, d_output, N, d_partial);
+
+            checkCudaErrors(cudaDeviceSynchronize());
+            break;
+        }
+
+        // ----------------------------------------------------------
+        case 6: {
+                DBG_PRINT("  >> Using softmax_coopgrid_kernel (Cooperative Groups)\n");
+
+                // 1. Use const block size since it's a template parameter
+                const int BLOCK_SIZE = 256;
+                
+                // 2. Create temporary device memory for max and sum
+                float *d_max = nullptr;
+                float *d_sum = nullptr;
+                checkCudaErrors(cudaMalloc(&d_max, sizeof(float)));
+                checkCudaErrors(cudaMalloc(&d_sum, sizeof(float)));
+                
+                // 3. Initialize d_max and d_sum
+                float init_max = -INFINITY;
+                float init_sum = 0.0f;
+                checkCudaErrors(cudaMemcpy(d_max, &init_max, sizeof(float), cudaMemcpyHostToDevice));
+                checkCudaErrors(cudaMemcpy(d_sum, &init_sum, sizeof(float), cudaMemcpyHostToDevice));
+
+                // 4. Calculate grid size based on N
+                int numBlocks = (N + BLOCK_SIZE - 1) / BLOCK_SIZE;
+                
+                // 5. Check cooperative launch capability
+                int dev = 0;
+                int supportsCoopLaunch = 0;
+                checkCudaErrors(cudaDeviceGetAttribute(&supportsCoopLaunch, 
+                    cudaDevAttrCooperativeLaunch, dev));
+                
+                if (!supportsCoopLaunch) {
+                    printf("Error: Device does not support Cooperative Launch\n");
+                    break;
+                }
+
+                // 6. Launch kernel with proper configuration
+                void *args[] = {(void *)&d_input, 
+                                (void *)&d_output,
+                                (void *)&d_max,
+                                (void *)&d_sum,
+                                (void *)&N};
+
+                dim3 gridDim(numBlocks);
+                dim3 blockDim(BLOCK_SIZE);
+
+                checkCudaErrors(cudaLaunchCooperativeKernel(
+                    (void*)softmax_coopgrid_kernel<float, BLOCK_SIZE>,
+                    gridDim,
+                    blockDim,
+                    args,
+                    BLOCK_SIZE * sizeof(float),  // shared memory size
+                    nullptr));                   // stream
+
+                // 7. Cleanup temporary memory
+                checkCudaErrors(cudaFree(d_max));
+                checkCudaErrors(cudaFree(d_sum));
+                
+                checkCudaErrors(cudaDeviceSynchronize());
+                break;
+            }
+
+        // ----------------------------------------------------------
+        default: {
+            DBG_PRINT("  >> Invalid kernel ID (%d)\n", whichKernel);
+            break;
+        }
+    } // end switch
 }
+
 
 // // Explicit instantiation
 // template void softmax_launch<float>(int, int, int, int, float*, float*, float*);
@@ -392,11 +607,21 @@ float benchmarkSoftmax(int N, int threads, int blocks, int whichKernel,
     // 2️⃣ Reduce per-block partial sums (entirely on GPU)
     int threads_reduce = 256;
     int blocks_reduce = (blocks + threads_reduce - 1) / threads_reduce;
-
+     
+    /*!SECTION
+    First pass: reduce per-block
+    partial sums into d_partial (overwriting the input). 
+    Each block processes up to threads_reduce elements from d_partial, writing one output per block.
+    */
     reduce_partial_sum_kernel<<<blocks_reduce, threads_reduce,
                                  threads_reduce * sizeof(float)>>>(d_partial, d_partial, blocks);
     checkCudaErrors(cudaDeviceSynchronize());
 
+    /*!SECTION
+    Second pass: reduce across blocks if needed (blocks_reduce > 1).Note here that gridsize is 1, 
+    so we launch a single block that processes all remaining partial sums in d_partial,
+    producing the final total sum in d_partial[0].
+    */
     if (blocks_reduce > 1) {
         reduce_partial_sum_kernel<<<1, threads_reduce,
                                      threads_reduce * sizeof(float)>>>(d_partial, d_partial, blocks_reduce);
@@ -456,14 +681,82 @@ int main(int argc, char **argv) {
     checkCudaErrors(cudaMemcpy(d_input, h_input.data(), bytes,
                                cudaMemcpyHostToDevice));
     std::vector<float> h_partial(Nmax / maxThreads + 1);
+    
+#if SINGLE_TEST_MODE
+    // ===========================================================
+    // 🧪 SINGLE TEST MODE
+       //./basesoftmax 16777216 3
+    // ===========================================================
+    int k = SINGLE_KERNEL_ID_DEFAULT;;
+    int n = SINGLE_INPUT_SIZE_DEFAULT;
+    
+ 
 
-    // CSV header
+    if (argc > 1) n = atoi(argv[1]);
+    if (argc > 2) k = atoi(argv[2]);
+    
+    // Round N up to next power of 2 (optional)
+    n = nextPow2(n);
+    if (k > 6) {
+        printf("Invalid kernel variant %d, must be in [0-%d]\n",
+               k, numVariants - 1);
+        return -1;
+    }
+    
+    int threads = 0, blocks = 0;
+    getNumBlocksAndThreads(k, n, maxBlocks, maxThreads, blocks, threads);
+    // blocks = MIN(blocks, maxBlocks);
+    DBG_PRINT("\n=== SINGLE TEST MODE ENABLED ===\n");
+    DBG_PRINT("Variant (kernel): %d\n", k);
+    DBG_PRINT("Input size (N):  %d\n", n);
+    DBG_PRINT("Threads/block:   %d\n", threads);
+    DBG_PRINT("Blocks:          %d\n", blocks);
+    DBG_PRINT("=================================\n");
+
+    float time_ms = benchmarkSoftmax(n, threads, blocks, k,
+                                     d_input, d_output, d_partial);
+    printf("\nSingle test result:\n");
+    printf("  Kernel variant: %d\n", k);
+    printf("  N = %d, Threads = %d, Blocks = %d, Time = %.5f ms\n",
+           n, threads, blocks, time_ms);
+    
+    // memory accessed for bytes read + written (approx) + memory accessed for partial sums
+    double bytes_moved = 2.0 * n * sizeof(float) + blocks * sizeof(float);
+    double gbps = (bytes_moved / (time_ms / 1000.0)) / 1e9;
+
+    printf("\nSingle test result:\n");
+    printf("  Kernel variant: %d\n", k);
+    printf("  N = %d, Threads = %d, Blocks = %d\n", n, threads, blocks);
+    printf("  Time = %.5f ms\n", time_ms);
+    printf("  Approx. memory throughput = %.2f GB/s\n", gbps);   
+    
+    std::vector<float> h_out(n);
+    cudaMemcpy(h_out.data(), d_output, n*sizeof(float), cudaMemcpyDeviceToHost);
+
+    float sum=0;
+    for (int i=0;i<n;i++) sum+=h_out[i];
+    printf("Output sum: %.6f\n", sum);
+
+    float denom;
+    cudaMemcpy(&denom, d_partial, sizeof(float), cudaMemcpyDeviceToHost);
+    printf("Final denominator (sumExp) = %.6f\n", denom);
+
+    // 2. Recompute CPU sum of exp(x) and compare:
+    double ref_sum = 0;
+    for (int i = 0; i < n; ++i)
+        ref_sum += exp(h_input[i]);
+    printf("Reference CPU sumExp = %.6f\n", ref_sum);
+    printf("Relative error = %.6f%%\n",
+        fabs(ref_sum - denom) / ref_sum * 100.0);
+#else
+    // ===========================================================
+    // 🧮 FULL BENCHMARK MODE
+    // ===========================================================
     printf("Variant");
     for (int n = 1<<10; n <= Nmax; n <<= 1)
         printf(", %d", n);
     printf("\n");
 
-    // Benchmark each variant
     for (int k = 0; k < numVariants; ++k) {
         printf("%d", k);
         for (int n = 1<<10; n <= Nmax; n <<= 1) {
@@ -471,12 +764,12 @@ int main(int argc, char **argv) {
             getNumBlocksAndThreads(k, n, maxBlocks, maxThreads,
                                    blocks, threads);
             float time_ms = benchmarkSoftmax(n, threads, blocks, k,
-                                             d_input, d_output,
-                                             d_partial);
+                                             d_input, d_output, d_partial);
             printf(", %.5f", time_ms);
         }
         printf("\n");
     }
+#endif
 
     // // ---- Validate correctness for final variant ----
     // int Ntest = std::min<uint64_t>(Nmax, 1ULL << 20);
